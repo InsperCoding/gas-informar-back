@@ -1,15 +1,17 @@
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-from .routers import users
+from fastapi.middleware.cors import CORSMiddleware
+from .routers import users, aulas  # import dos routers
 from . import models
 from .database import engine
 
-app = FastAPI()
+app = FastAPI(title="GAS Informar - API")
 
-# CORS settings
+# Configuração de CORS
 origins = [
     "http://localhost:3000",
-    "http://127.0.0.1:3000"
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",  # caso de Vite
+    "http://127.0.0.1:5173"
 ]
 
 app.add_middleware(
@@ -20,12 +22,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create the database tables if they do not exist
-models.Base.metadata.create_all(bind=engine)
+# Importante:
+# O banco deve ser criado/resetado com: python scripts/reset_db.py
 
-# Include routers
+# Inclui os routers da aplicação
 app.include_router(users.router)
+app.include_router(aulas.router)
 
 @app.get("/")
 def root():
-    return {"msg": "API rodando"}
+    return {"msg": "API do GAS Informar rodando com sucesso 🚀"}
