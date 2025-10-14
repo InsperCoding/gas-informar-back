@@ -1,10 +1,21 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.types import Enum as SQLEnum
-from datetime import datetime
+from datetime import datetime, timedelta
 import enum
-
 from .database import Base
+
+# Modelo para tokens de atualização (refresh tokens) -> Cookies HTTP-Only
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(500), nullable=False, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    revoked = Column(Boolean, default=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    user = relationship("User", backref="refresh_tokens")
 
 # Tipo de exercício (apenas para clareza; armazenado como Enum no DB)
 class ExerciseTypeEnum(str, enum.Enum):
