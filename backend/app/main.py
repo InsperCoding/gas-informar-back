@@ -1,8 +1,12 @@
+# main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import users, aulas  # import dos routers
+from fastapi.staticfiles import StaticFiles
+
+from .routers import users, aulas, uploads  # uploads adicionado
 from . import models
 from .database import engine
+import os
 
 app = FastAPI(title="GAS Informar - API")
 
@@ -10,8 +14,8 @@ app = FastAPI(title="GAS Informar - API")
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://localhost:5173",  # caso de Vite
-    "http://127.0.0.1:5173"
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 app.add_middleware(
@@ -22,13 +26,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Importante:
-# O banco deve ser criado/resetado com: python scripts/reset_db.py
+# Ensure static/upload dir exists (para armazenar imagens)
+UPLOAD_DIR = "static/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Inclui os routers da aplicação
+# monta static (serve /static/...)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Inclui os routers da aplicação (ordem não crítica)
 app.include_router(users.router)
 app.include_router(aulas.router)
+app.include_router(uploads.router)  # router de uploads
 
 @app.get("/")
 def root():
-    return {"msg": "API do GAS Informar rodando com sucesso 🚀"}
+    return {"msg": "API do GAS Informar rodando com sucesso!"}
