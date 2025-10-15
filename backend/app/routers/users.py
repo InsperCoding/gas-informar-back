@@ -1,3 +1,4 @@
+# routers/users.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -48,3 +49,45 @@ def list_users(db: Session = Depends(auth.get_db), current_user: models.User = D
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Apenas administradores podem listar todos os usuários")
     return db.query(models.User).all()
+
+@router.put("/{user_id}", response_model=schemas.UserOut)
+def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    # somente admin pode atualizar outros usuários
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Apenas administradores podem atualizar usuários")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    # atualiza campos se presentes
+    if user_update.nome is not None:
+        user.nome = user_update.nome
+    if user_update.email is not None:
+        # checa conflito de email com outro usuário
+        existing = db.query(models.User).filter(models.User.email == user_update.email, models.User.id != user_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email já cadastrado por outro usuário")
+        user.email = user_update.email
+    if user_update.role is not None:
+        user.role = user_update.role
+    if user_update.senha is not None and user_update.senha != "":
+        user.senha_hash = auth.hash_password(user_update.senha)
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Apenas administradores podem deletar usuários")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    db.delete(user)
+    db.commit()
+    return None
