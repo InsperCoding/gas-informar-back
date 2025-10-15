@@ -57,6 +57,7 @@ class ConteudoBloco(Base):
     titulo = Column(String(200), nullable=True)
     texto = Column(Text, nullable=True)
     ordem = Column(Integer, default=0)  # para ordenar os blocos dentro da aula
+    imagem_url = Column(String(1024), nullable=True)
 
     aula = relationship("Aula", back_populates="blocos")
 

@@ -39,6 +39,7 @@ class ConteudoBlocoCreate(BaseModel):
     titulo: Optional[str] = None
     texto: Optional[str] = None
     ordem: Optional[int] = 0
+    imagem_url: Optional[str] = None
 
 class ConteudoBlocoOut(ConteudoBlocoCreate):
     id: int

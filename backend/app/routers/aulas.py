@@ -30,13 +30,14 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
     db.add(aula)
     db.flush()  # garante que aula.id exista antes de criar blocos/exercicios
 
-    # blocos
+    # blocos (agora incluindo imagem_url se fornecido)
     for i, bloco in enumerate(payload.blocos or []):
         cb = models.ConteudoBloco(
             aula_id=aula.id,
             titulo=bloco.titulo,
             texto=bloco.texto,
-            ordem=(bloco.ordem if bloco.ordem is not None else i)
+            ordem=(bloco.ordem if bloco.ordem is not None else i),
+            imagem_url=(getattr(bloco, "imagem_url", None) if getattr(bloco, "imagem_url", None) else None)
         )
         db.add(cb)
 
@@ -71,32 +72,61 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
 
 @router.put("/{aula_id}", response_model=schemas.AulaOut)
 def atualizar_aula(aula_id: int, payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    # apenas admin/professor
     require_role(current_user, ["admin", "professor"])
     aula = db.query(models.Aula).filter(models.Aula.id == aula_id).first()
     if not aula:
         raise HTTPException(status_code=404, detail="Aula não encontrada")
 
+    # atualizar campos simples
     aula.titulo = payload.titulo
     aula.descricao = payload.descricao
 
-    # remover blocos e exercicios antigos (estratégia simples: delete all then recreate)
-    for b in list(aula.blocos):
-        db.delete(b)
+    # --- SINCRONIZAÇÃO DE BLOCOS (update/create/delete) ---
+    # obter blocos existentes do BD mapeados por id
+    existing_blocos = {b.id: b for b in aula.blocos or []}
+
+    incoming_blocos = payload.blocos or []
+
+    # ids recebidos (para saber o que manter)
+    incoming_ids = set()
+    for idx, bloco_payload in enumerate(incoming_blocos):
+        # bloco_payload pode ser pydantic model -> acessar com getattr
+        bloco_id = getattr(bloco_payload, "id", None)
+        imagem_url = getattr(bloco_payload, "imagem_url", None)
+
+        if bloco_id and bloco_id in existing_blocos:
+            # atualizar bloco existente
+            b = existing_blocos[bloco_id]
+            b.titulo = bloco_payload.titulo
+            b.texto = bloco_payload.texto
+            b.ordem = bloco_payload.ordem if bloco_payload.ordem is not None else idx
+            b.imagem_url = imagem_url if imagem_url else None
+            incoming_ids.add(bloco_id)
+        else:
+            # criar novo bloco
+            cb = models.ConteudoBloco(
+                aula_id=aula.id,
+                titulo=bloco_payload.titulo,
+                texto=bloco_payload.texto,
+                ordem=(bloco_payload.ordem if bloco_payload.ordem is not None else idx),
+                imagem_url=(imagem_url if imagem_url else None)
+            )
+            db.add(cb)
+            # NOTE: não adicionamos id em incoming_ids porque ainda não tem id no DB
+
+    # deletar blocos que existem no DB mas não vieram no payload
+    for existing_id, existing_obj in list(existing_blocos.items()):
+        if existing_id not in incoming_ids:
+            db.delete(existing_obj)
+
+    # --- RECRIAÇÃO / SINCRONIZAÇÃO DE EXERCICIOS (mantive seu fluxo atual) ---
+    # remover todos os exercícios antigos (seguindo sua estratégia anterior)
     for exo in list(aula.exercicios):
         db.delete(exo)
     db.flush()
 
-    # recriar blocos
-    for i, bloco in enumerate(payload.blocos or []):
-        cb = models.ConteudoBloco(
-            aula_id=aula.id,
-            titulo=bloco.titulo,
-            texto=bloco.texto,
-            ordem=(bloco.ordem if bloco.ordem is not None else i)
-        )
-        db.add(cb)
-
-    # recriar exercicios + alternativas
+    # recriar exercicios + alternativas (a lógica permanece igual)
     for i, ex in enumerate(payload.exercicios or []):
         tipo_model = models.ExerciseTypeEnum(ex.tipo.value)
         ex_model = models.Exercicio(
