@@ -17,6 +17,15 @@ class UserOut(UserBase):
     class Config:
         orm_mode = True
 
+class UserUpdate(BaseModel):
+    nome: Optional[str] = None
+    email: Optional[EmailStr] = None
+    role: Optional[str] = None  # 'admin' | 'professor' | 'aluno'
+    senha: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
 class Token(BaseModel):
     access_token: str
     token_type: str
