@@ -1,3 +1,4 @@
+# schemas.py
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -14,16 +15,14 @@ class UserCreate(UserBase):
 
 class UserOut(UserBase):
     id: int
-
     class Config:
         orm_mode = True
 
 class UserUpdate(BaseModel):
     nome: Optional[str] = None
     email: Optional[EmailStr] = None
-    role: Optional[str] = None  # 'admin' | 'professor' | 'aluno'
+    role: Optional[str] = None
     senha: Optional[str] = None
-
     class Config:
         orm_mode = True
 
@@ -34,10 +33,8 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
-
 # ---------- aulas / conteúdo / exercícios ----------
 class ConteudoBlocoCreate(BaseModel):
-    # para criação/atualização: permitir omitir campos (None)
     titulo: Optional[str] = None
     texto: Optional[str] = None
     ordem: Optional[int] = None
@@ -45,7 +42,6 @@ class ConteudoBlocoCreate(BaseModel):
 
 class ConteudoBlocoOut(ConteudoBlocoCreate):
     id: int
-
     class Config:
         orm_mode = True
 
@@ -53,38 +49,40 @@ class ExerciseType(str, Enum):
     text = "text"
     multiple_choice = "multiple_choice"
 
-class ExercicioCreate(BaseModel):
-    titulo: Optional[str] = None
-    enunciado: Optional[str] = None
-    tipo: ExerciseType
-    resposta_modelo: Optional[str] = None
-    pontos: Optional[int] = None
-    ordem: Optional[int] = None
-    alternativas: Optional[List[str]] = None  # apenas textos das alternativas
-    alternativas_certas: Optional[List[int]] = None  # índices (0-based) das corretas
-
-class AlternativaOut(BaseModel):
-    id: int
+class AlternativaInOut(BaseModel):
+    id: Optional[int] = None
     texto: str
-
+    # frontend pode enviar is_correta para conveniência — backend normaliza para correct_alternativas
+    is_correta: Optional[bool] = None
     class Config:
         orm_mode = True
+
+class ExercicioCreate(BaseModel):
+    id: Optional[int] = None
+    titulo: Optional[str] = None
+    enunciado: str
+    tipo: ExerciseType
+    resposta_modelo: Optional[str] = None
+    pontos: Optional[int] = 1
+    ordem: Optional[int] = 0
+    alternativas: Optional[List[AlternativaInOut]] = None
+    alternativas_certas: Optional[List[int]] = None  # índices, se o frontend preferir
 
 class ExercicioOut(BaseModel):
     id: int
     titulo: Optional[str] = None
-    enunciado: Optional[str] = None
+    enunciado: str
     tipo: ExerciseType
-    pontos: int = 0
-    alternativas: List[AlternativaOut] = Field(default_factory=list)
-
+    pontos: int
+    alternativas: Optional[List[AlternativaInOut]] = []
+    # lista de ids corretos (refere-se ao campo id dentro do JSON de alternativas)
+    correct_alternativas: Optional[List[int]] = []
     class Config:
         orm_mode = True
 
 class AulaCreate(BaseModel):
     titulo: str
     descricao: Optional[str] = None
-    # em payloads de criação, é preferível aceitar None quando o cliente não enviar o campo
     blocos: Optional[List[ConteudoBlocoCreate]] = None
     exercicios: Optional[List[ExercicioCreate]] = None
 
@@ -96,25 +94,22 @@ class AulaOut(BaseModel):
     blocos: List[ConteudoBlocoOut] = Field(default_factory=list)
     exercicios: List[ExercicioOut] = Field(default_factory=list)
     created_at: datetime
-
     class Config:
         orm_mode = True
 
 class AulaUpdate(BaseModel):
     titulo: Optional[str] = None
     descricao: Optional[str] = None
-    # None => campo não enviado (importantíssimo para PUT parcial)
     blocos: Optional[List[ConteudoBlocoCreate]] = None
     exercicios: Optional[List[ExercicioCreate]] = None
-
     class Config:
         orm_mode = True
-
 
 # ---------- respostas ----------
 class RespostaCreate(BaseModel):
     exercicio_id: int
     resposta_texto: Optional[str] = None
+    # alternativa_id refere-se ao id interno do objeto armazenado em Exercicio.alternativas
     alternativa_id: Optional[int] = None
 
 class RespostaOut(BaseModel):
@@ -126,7 +121,6 @@ class RespostaOut(BaseModel):
     alternativa_id: Optional[int] = None
     pontuacao: int
     tentativa_id: Optional[int] = None
-
     class Config:
         orm_mode = True
 
