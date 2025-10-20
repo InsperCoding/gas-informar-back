@@ -36,7 +36,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Inclui os routers da aplicação (ordem não crítica)
 app.include_router(users.router)
 app.include_router(aulas.router)
-app.include_router(uploads.router)  # router de uploads
+app.include_router(uploads.router)
 
 @app.get("/")
 def root():

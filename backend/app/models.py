@@ -1,3 +1,4 @@
+# models.py
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.types import Enum as SQLEnum
@@ -35,6 +36,7 @@ class User(Base):
     # relações simples (backrefs usados por outros modelos)
     aulas = relationship("Aula", back_populates="autor", cascade="all, delete-orphan")
     respostas = relationship("RespostaAluno", back_populates="aluno", cascade="all, delete-orphan")
+    tentativas = relationship("TentativaAula", back_populates="aluno", cascade="all, delete-orphan")
 
 
 class Aula(Base):
@@ -48,6 +50,7 @@ class Aula(Base):
     autor = relationship("User", back_populates="aulas")
     blocos = relationship("ConteudoBloco", back_populates="aula", cascade="all, delete-orphan", order_by="ConteudoBloco.ordem")
     exercicios = relationship("Exercicio", back_populates="aula", cascade="all, delete-orphan", order_by="Exercicio.ordem")
+    tentativas = relationship("TentativaAula", back_populates="aula", cascade="all, delete-orphan")
 
 
 class ConteudoBloco(Base):
@@ -88,6 +91,21 @@ class Alternativa(Base):
     exercicio = relationship("Exercicio", back_populates="alternativas")
 
 
+class TentativaAula(Base):
+    __tablename__ = "tentativas_aula"
+    id = Column(Integer, primary_key=True, index=True)
+    aluno_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    aula_id = Column(Integer, ForeignKey("aulas.id", ondelete="CASCADE"))
+    finalizada = Column(Boolean, default=False)
+    pontuacao = Column(Integer, default=0, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    finalized_at = Column(DateTime, nullable=True)
+
+    aluno = relationship("User", back_populates="tentativas")
+    aula = relationship("Aula", back_populates="tentativas")
+    respostas = relationship("RespostaAluno", back_populates="tentativa", cascade="all, delete-orphan")
+
+
 class RespostaAluno(Base):
     __tablename__ = "respostas_aluno"
     id = Column(Integer, primary_key=True, index=True)
@@ -97,7 +115,9 @@ class RespostaAluno(Base):
     resposta_texto = Column(Text, nullable=True)
     alternativa_id = Column(Integer, ForeignKey("alternativas.id"), nullable=True)
     pontuacao = Column(Integer, default=0)
+    tentativa_id = Column(Integer, ForeignKey("tentativas_aula.id", ondelete="CASCADE"), nullable=True)
 
     exercicio = relationship("Exercicio", back_populates="respostas")
     aluno = relationship("User", back_populates="respostas")
     alternativa = relationship("Alternativa")
+    tentativa = relationship("TentativaAula", back_populates="respostas")

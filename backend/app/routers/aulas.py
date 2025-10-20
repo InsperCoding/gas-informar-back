@@ -1,3 +1,4 @@
+# aulas.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -70,85 +71,90 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
     db.refresh(aula)
     return aula
 
-@router.put("/{aula_id}", response_model=schemas.AulaOut)
-def atualizar_aula(aula_id: int, payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
-    # apenas admin/professor
+
+@router.patch("/{aula_id}", response_model=schemas.AulaOut)
+def atualizar_aula(
+    aula_id: int,
+    payload: schemas.AulaUpdate,
+    db: Session = Depends(auth.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
     require_role(current_user, ["admin", "professor"])
+
     aula = db.query(models.Aula).filter(models.Aula.id == aula_id).first()
     if not aula:
         raise HTTPException(status_code=404, detail="Aula não encontrada")
 
-    # atualizar campos simples
-    aula.titulo = payload.titulo
-    aula.descricao = payload.descricao
+    # --- Atualizar campos simples apenas se vieram no payload ---
+    if payload.titulo is not None:
+        aula.titulo = payload.titulo
+    if payload.descricao is not None:
+        aula.descricao = payload.descricao
 
-    # --- SINCRONIZAÇÃO DE BLOCOS (update/create/delete) ---
-    # obter blocos existentes do BD mapeados por id
-    existing_blocos = {b.id: b for b in aula.blocos or []}
+    # --- BLOCOS: sincroniza (update/create/delete) ---
+    if payload.blocos is not None:
+        existing_blocos = {b.id: b for b in (aula.blocos or [])}
+        incoming_blocos = payload.blocos or []
+        incoming_ids = set()
 
-    incoming_blocos = payload.blocos or []
-
-    # ids recebidos (para saber o que manter)
-    incoming_ids = set()
-    for idx, bloco_payload in enumerate(incoming_blocos):
-        # bloco_payload pode ser pydantic model -> acessar com getattr
-        bloco_id = getattr(bloco_payload, "id", None)
-        imagem_url = getattr(bloco_payload, "imagem_url", None)
-
-        if bloco_id and bloco_id in existing_blocos:
-            # atualizar bloco existente
-            b = existing_blocos[bloco_id]
-            b.titulo = bloco_payload.titulo
-            b.texto = bloco_payload.texto
-            b.ordem = bloco_payload.ordem if bloco_payload.ordem is not None else idx
-            b.imagem_url = imagem_url if imagem_url else None
-            incoming_ids.add(bloco_id)
-        else:
-            # criar novo bloco
-            cb = models.ConteudoBloco(
-                aula_id=aula.id,
-                titulo=bloco_payload.titulo,
-                texto=bloco_payload.texto,
-                ordem=(bloco_payload.ordem if bloco_payload.ordem is not None else idx),
-                imagem_url=(imagem_url if imagem_url else None)
-            )
-            db.add(cb)
-            # NOTE: não adicionamos id em incoming_ids porque ainda não tem id no DB
-
-    # deletar blocos que existem no DB mas não vieram no payload
-    for existing_id, existing_obj in list(existing_blocos.items()):
-        if existing_id not in incoming_ids:
-            db.delete(existing_obj)
-
-    # --- RECRIAÇÃO / SINCRONIZAÇÃO DE EXERCICIOS (mantive seu fluxo atual) ---
-    # remover todos os exercícios antigos (seguindo sua estratégia anterior)
-    for exo in list(aula.exercicios):
-        db.delete(exo)
-    db.flush()
-
-    # recriar exercicios + alternativas (a lógica permanece igual)
-    for i, ex in enumerate(payload.exercicios or []):
-        tipo_model = models.ExerciseTypeEnum(ex.tipo.value)
-        ex_model = models.Exercicio(
-            aula_id=aula.id,
-            titulo=ex.titulo,
-            enunciado=ex.enunciado,
-            tipo=tipo_model,
-            resposta_modelo=ex.resposta_modelo,
-            pontos=(ex.pontos or 1),
-            ordem=(ex.ordem if ex.ordem is not None else i)
-        )
-        db.add(ex_model)
-        db.flush()
-        if ex.tipo == schemas.ExerciseType.multiple_choice and ex.alternativas:
-            corretas = set(ex.alternativas_certas or [])
-            for idx, texto_alt in enumerate(ex.alternativas):
-                alt = models.Alternativa(
-                    exercicio_id=ex_model.id,
-                    texto=texto_alt,
-                    is_correta=(idx in corretas)
+        for idx, bloco_payload in enumerate(incoming_blocos):
+            bloco_id = getattr(bloco_payload, "id", None)
+            ordem = bloco_payload.ordem if bloco_payload.ordem is not None else idx
+            if bloco_id and bloco_id in existing_blocos:
+                b = existing_blocos[bloco_id]
+                b.titulo = bloco_payload.titulo
+                b.texto = bloco_payload.texto
+                b.ordem = ordem
+                b.imagem_url = bloco_payload.imagem_url or None
+                incoming_ids.add(bloco_id)
+            else:
+                novo = models.ConteudoBloco(
+                    aula_id=aula.id,
+                    titulo=bloco_payload.titulo,
+                    texto=bloco_payload.texto,
+                    ordem=ordem,
+                    imagem_url=bloco_payload.imagem_url or None
                 )
-                db.add(alt)
+                db.add(novo)
+
+        for existing_id, existing_obj in list(existing_blocos.items()):
+            if existing_id not in incoming_ids:
+                db.delete(existing_obj)
+
+    # --- EXERCÍCIOS: deletar e recriar apenas se enviados ---
+    if payload.exercicios is not None:
+        for ex in list(aula.exercicios or []):
+            db.delete(ex)
+        db.flush()
+
+        for i, ex_payload in enumerate(payload.exercicios or []):
+            ordem = ex_payload.ordem if ex_payload.ordem is not None else i
+            pontos = ex_payload.pontos or 1
+
+            # Conversão correta para o Enum do model
+            tipo_model = models.ExerciseTypeEnum(ex_payload.tipo.value)
+
+            ex_model = models.Exercicio(
+                aula_id=aula.id,
+                titulo=ex_payload.titulo,
+                enunciado=ex_payload.enunciado,
+                tipo=tipo_model,
+                resposta_modelo=ex_payload.resposta_modelo,
+                pontos=pontos,
+                ordem=ordem
+            )
+            db.add(ex_model)
+            db.flush()
+
+            if getattr(ex_payload, "alternativas", None):
+                corretas = set(ex_payload.alternativas_certas or [])
+                for idx_alt, texto_alt in enumerate(ex_payload.alternativas):
+                    alt = models.Alternativa(
+                        exercicio_id=ex_model.id,
+                        texto=texto_alt,
+                        is_correta=(idx_alt in corretas)
+                    )
+                    db.add(alt)
 
     db.commit()
     db.refresh(aula)

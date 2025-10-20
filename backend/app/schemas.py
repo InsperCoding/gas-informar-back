@@ -1,5 +1,5 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
 
@@ -14,6 +14,7 @@ class UserCreate(UserBase):
 
 class UserOut(UserBase):
     id: int
+
     class Config:
         orm_mode = True
 
@@ -36,13 +37,15 @@ class TokenData(BaseModel):
 
 # ---------- aulas / conteúdo / exercícios ----------
 class ConteudoBlocoCreate(BaseModel):
+    # para criação/atualização: permitir omitir campos (None)
     titulo: Optional[str] = None
     texto: Optional[str] = None
-    ordem: Optional[int] = 0
+    ordem: Optional[int] = None
     imagem_url: Optional[str] = None
 
 class ConteudoBlocoOut(ConteudoBlocoCreate):
     id: int
+
     class Config:
         orm_mode = True
 
@@ -52,44 +55,58 @@ class ExerciseType(str, Enum):
 
 class ExercicioCreate(BaseModel):
     titulo: Optional[str] = None
-    enunciado: str
+    enunciado: Optional[str] = None
     tipo: ExerciseType
     resposta_modelo: Optional[str] = None
-    pontos: Optional[int] = 1
-    ordem: Optional[int] = 0
+    pontos: Optional[int] = None
+    ordem: Optional[int] = None
     alternativas: Optional[List[str]] = None  # apenas textos das alternativas
     alternativas_certas: Optional[List[int]] = None  # índices (0-based) das corretas
 
 class AlternativaOut(BaseModel):
     id: int
     texto: str
+
     class Config:
         orm_mode = True
 
 class ExercicioOut(BaseModel):
     id: int
     titulo: Optional[str] = None
-    enunciado: str
+    enunciado: Optional[str] = None
     tipo: ExerciseType
-    pontos: int
-    alternativas: Optional[List[AlternativaOut]] = []
+    pontos: int = 0
+    alternativas: List[AlternativaOut] = Field(default_factory=list)
+
     class Config:
         orm_mode = True
 
 class AulaCreate(BaseModel):
     titulo: str
     descricao: Optional[str] = None
-    blocos: Optional[List[ConteudoBlocoCreate]] = []
-    exercicios: Optional[List[ExercicioCreate]] = []
+    # em payloads de criação, é preferível aceitar None quando o cliente não enviar o campo
+    blocos: Optional[List[ConteudoBlocoCreate]] = None
+    exercicios: Optional[List[ExercicioCreate]] = None
 
 class AulaOut(BaseModel):
     id: int
     titulo: str
-    descricao: Optional[str]
+    descricao: Optional[str] = None
     autor_id: int
-    blocos: List[ConteudoBlocoOut] = []
-    exercicios: List[ExercicioOut] = []
+    blocos: List[ConteudoBlocoOut] = Field(default_factory=list)
+    exercicios: List[ExercicioOut] = Field(default_factory=list)
     created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class AulaUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    # None => campo não enviado (importantíssimo para PUT parcial)
+    blocos: Optional[List[ConteudoBlocoCreate]] = None
+    exercicios: Optional[List[ExercicioCreate]] = None
+
     class Config:
         orm_mode = True
 
@@ -105,8 +122,47 @@ class RespostaOut(BaseModel):
     exercicio_id: int
     aluno_id: int
     enviado_em: datetime
-    resposta_texto: Optional[str]
-    alternativa_id: Optional[int]
+    resposta_texto: Optional[str] = None
+    alternativa_id: Optional[int] = None
     pontuacao: int
+    tentativa_id: Optional[int] = None
+
     class Config:
         orm_mode = True
+
+
+# ---------- Desempenho / relatórios ----------
+class QuestaoDesempenho(BaseModel):
+    exercicio_id: int
+    enunciado: str
+    total_respondentes: int
+    total_acertos: int
+    taxa_acerto: float  # 0..100
+    distribuicao_respostas: Optional[Dict[int, int]] = None  # {alternativa_id: count}
+
+class AulaDesempenho(BaseModel):
+    aula_id: int
+    titulo: str
+    respondentes: int
+    media_pontuacao: float
+    percentual_conclusao: float  # 0..100
+    questoes: List[QuestaoDesempenho] = Field(default_factory=list)
+
+class DetalheAlunoResposta(BaseModel):
+    exercicio_id: int
+    enunciado: str
+    resposta_aluno: Optional[str] = None
+    alternativa_escolhida_id: Optional[int] = None
+    acertou: bool
+    pontuacao_obtida: int
+
+class DesempenhoAluno(BaseModel):
+    aluno_id: int
+    nome: str
+    pontuacao_total: int
+    finalizada: bool
+    responses: List[DetalheAlunoResposta] = Field(default_factory=list)
+
+class FinalizarResponse(BaseModel):
+    status: str
+    pontuacao: int
