@@ -1,19 +1,53 @@
-# aulas.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from typing import List
 from datetime import datetime
 import re
 import json
+from sqlalchemy import func
 
 from .. import models, schemas, auth
 
 router = APIRouter(prefix="/aulas", tags=["Aulas"])
 
+# ----------------
+# HELPERS 
+# ----------------
+
 # helper: checar role
 def require_role(user: models.User, allowed_roles: List[str]):
     if user.role not in allowed_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissão negada")
+    
+# helper: verificar se usuário pode ver a aula
+def user_can_view_aula(user: models.User, aula: models.Aula) -> bool:
+    """
+    Regras:
+    - admin / professor sempre True
+    - se aula.category é None -> pública
+    - se user.turma == aula.category -> True
+    - se user estiver em aula.permitidos -> True (override)
+    - caso contrário False
+    """
+    if user.role in ("admin", "professor"):
+        return True
+
+    # pública
+    if getattr(aula, "category", None) in (None, "", "null"):
+        return True
+
+    # match turma
+    if getattr(user, "turma", None) and getattr(aula, "category", None):
+        if str(user.turma).strip().lower() == str(aula.category).strip().lower():
+            return True
+
+    # override: associação explicitamente permitida
+    if getattr(aula, "permitidos", None):
+        if any(u.id == user.id for u in aula.permitidos):
+            return True
+
+    return False
+
 
 # Regex para detectar padrões antigos como:
 # id=1 texto='algum texto' is_correta=False
@@ -377,31 +411,97 @@ def gravar_feedback_resposta(resposta_id: int, payload: dict, db: Session = Depe
     return {"status": "ok", "resposta_id": resposta.id, "feedback": resposta.feedback_professor}
 
 @router.get("/", response_model=List[schemas.AulaOut])
-def listar_aulas(skip: int = 0, limit: int = 50, db: Session = Depends(auth.get_db)):
-    aulas = db.query(models.Aula).options(joinedload(models.Aula.blocos), joinedload(models.Aula.exercicios)).offset(skip).limit(limit).all()
-    
-    # adicionar nome do autor manualmente
+def listar_aulas(
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(auth.get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """
+    - admin/professor: todas as aulas
+    - aluno: apenas aulas públicas (category IS NULL) ou aulas cuja category == user.turma
+    """
+    # carregar blocos/exercicios/autor para evitar N+1
+    base_q = db.query(models.Aula).options(
+        joinedload(models.Aula.blocos),
+        joinedload(models.Aula.exercicios),
+        joinedload(models.Aula.autor),
+    )
+
+    if current_user.role in ("admin", "professor"):
+        aulas = base_q.order_by(models.Aula.created_at.desc()).offset(skip).limit(limit).all()
+    else:
+        # alunos: públicas OR categoria == user.turma (case-insensitive)
+        public_q = base_q.filter(models.Aula.category == None)
+        turma_q = base_q.filter(
+            models.Aula.category != None,
+            func.lower(models.Aula.category) == func.lower(current_user.turma or "")
+        )
+
+        aulas_public = public_q.all()
+        aulas_turma = turma_q.all()
+
+        # juntar sem duplicatas e ordenar por created_at desc
+        combined = {a.id: a for a in (aulas_public + aulas_turma)}.values()
+        aulas = sorted(list(combined), key=lambda x: x.created_at or datetime.min, reverse=True)[skip: skip + limit]
+
+    # construir resposta (sem campos de permitted_users)
     result = []
     for a in aulas:
-        autor_nome = a.autor.nome if a.autor else None
-        result.append(
-            schemas.AulaOut(
-                id=a.id,
-                titulo=a.titulo,
-                descricao=a.descricao,
-                autor_id=a.autor_id,
-                autor_nome=autor_nome,
-                created_at=a.created_at,
-            )
+        autor_nome = a.autor.nome if getattr(a, "autor", None) else None
+        aula_out = schemas.AulaOut(
+            id=a.id,
+            titulo=a.titulo,
+            descricao=a.descricao,
+            autor_id=a.autor_id,
+            autor_nome=autor_nome,
+            blocos=a.blocos or [],
+            exercicios=a.exercicios or [],
+            created_at=a.created_at,
+            category=getattr(a, "category", None),
         )
+        result.append(aula_out)
+
     return result
 
+
+
+# -----------------------
+# obter aula (verifica permissão via turma/category)
+# -----------------------
 @router.get("/{aula_id}", response_model=schemas.AulaOut)
 def obter_aula(aula_id: int, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
-    aula = db.query(models.Aula).options(joinedload(models.Aula.blocos), joinedload(models.Aula.exercicios)).filter(models.Aula.id == aula_id).first()
+    aula = (
+        db.query(models.Aula)
+        .options(
+            joinedload(models.Aula.blocos),
+            joinedload(models.Aula.exercicios),
+            joinedload(models.Aula.autor),
+        )
+        .filter(models.Aula.id == aula_id)
+        .first()
+    )
     if not aula:
         raise HTTPException(status_code=404, detail="Aula não encontrada")
-    return aula
+
+    # checagem de permissão baseada apenas em turma/category e roles
+    if not user_can_view_aula(current_user, aula):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissão negada")
+
+    autor_nome = aula.autor.nome if getattr(aula, "autor", None) else None
+    aula_out = schemas.AulaOut(
+        id=aula.id,
+        titulo=aula.titulo,
+        descricao=aula.descricao,
+        autor_id=aula.autor_id,
+        autor_nome=autor_nome,
+        blocos=aula.blocos or [],
+        exercicios=aula.exercicios or [],
+        created_at=aula.created_at,
+        category=getattr(aula, "category", None),
+    )
+    return aula_out
+
 
 # -----------------------
 # criar aula (cria blocos/exercícios mas grava alternativas em JSONB)
@@ -409,22 +509,33 @@ def obter_aula(aula_id: int, db: Session = Depends(auth.get_db), current_user: m
 @router.post("/", response_model=schemas.AulaOut)
 def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
     require_role(current_user, ["admin", "professor"])
-    aula = models.Aula(titulo=payload.titulo, descricao=payload.descricao, autor_id=current_user.id)
+
+    aula = models.Aula(
+        titulo=payload.titulo,
+        descricao=payload.descricao,
+        autor_id=current_user.id,
+    )
+
+    # aplicar categoria/turma da aula (pode ser None -> pública)
+    if getattr(payload, "category", None) is not None:
+        aula.category = payload.category
+
     db.add(aula)
     db.flush()  # garante aula.id
 
-    # blocos (igual)
+    # blocos
     for i, bloco in enumerate(payload.blocos or []):
         cb = models.ConteudoBloco(
             aula_id=aula.id,
             titulo=bloco.titulo,
             texto=bloco.texto,
             ordem=(bloco.ordem if bloco.ordem is not None else i),
-            imagem_url=(getattr(bloco, "imagem_url", None) if getattr(bloco, "imagem_url", None) else None)
+            imagem_url=(getattr(bloco, "imagem_url", None) if getattr(bloco, "imagem_url", None) else None),
+            youtube_url=(getattr(bloco, "youtube_url", None) if getattr(bloco, "youtube_url", None) else None),
         )
         db.add(cb)
 
-    # exercicios -> armazenar alternativas como JSONB
+    # exercícios -> JSONB alternativas
     for i, ex in enumerate(payload.exercicios or []):
         try:
             tipo_model = models.ExerciseTypeEnum(ex.tipo)
@@ -438,8 +549,9 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
             tipo=tipo_model,
             resposta_modelo=ex.resposta_modelo,
             pontos=(ex.pontos or 1),
-            ordem=(ex.ordem if ex.ordem is not None else i)
+            ordem=(ex.ordem if ex.ordem is not None else i),
         )
+
         incoming_alts = getattr(ex, "alternativas", []) or []
         incoming_certas_indices = set(getattr(ex, "alternativas_certas", []) or [])
         normalized_alts, correct_ids = normalize_alternativas_payload(incoming_alts, incoming_certas_indices)
@@ -451,128 +563,182 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
 
     db.commit()
     db.refresh(aula)
-    return aula
+
+    # montar retorno (compatível com AulaOut; sem campos de permitted_users)
+    autor_nome = aula.autor.nome if getattr(aula, "autor", None) else None
+    aula_out = schemas.AulaOut(
+        id=aula.id,
+        titulo=aula.titulo,
+        descricao=aula.descricao,
+        autor_id=aula.autor_id,
+        autor_nome=autor_nome,
+        blocos=aula.blocos or [],
+        exercicios=aula.exercicios or [],
+        created_at=aula.created_at,
+        category=getattr(aula, "category", None),
+    )
+    return aula_out
 
 # -----------------------
 # PATCH /aulas/{aula_id} - sincroniza blocos/exercícios/alternativas por id
 # -----------------------
 @router.patch("/{aula_id}", response_model=schemas.AulaOut)
-def atualizar_aula(aula_id: int, payload: schemas.AulaUpdate, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
+def atualizar_aula(
+    aula_id: int,
+    payload: schemas.AulaUpdate,
+    db: Session = Depends(auth.get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
     require_role(current_user, ["admin", "professor"])
-    aula = db.query(models.Aula).options(joinedload(models.Aula.exercicios), joinedload(models.Aula.blocos)).filter(models.Aula.id == aula_id).first()
+
+    aula = (
+        db.query(models.Aula)
+        .options(joinedload(models.Aula.exercicios), joinedload(models.Aula.blocos), joinedload(models.Aula.autor))
+        .filter(models.Aula.id == aula_id)
+        .first()
+    )
     if not aula:
         raise HTTPException(status_code=404, detail="Aula não encontrada")
 
+    # __fields_set__ usado para distinguir "campo omitido" vs "campo enviado como null"
+    fields_set = getattr(payload, "__fields_set__", set())
+
     # Atualiza campos simples apenas se vieram no payload
-    if payload.titulo is not None:
+    if "titulo" in fields_set:
         aula.titulo = payload.titulo
-    if payload.descricao is not None:
+    if "descricao" in fields_set:
         aula.descricao = payload.descricao
 
-    # BLOCOS
-    if payload.blocos is not None:
-        existing_blocos = {b.id: b for b in (aula.blocos or [])}
-        incoming_blocos = payload.blocos or []
-        incoming_ids = set()
-        for idx, bloco_payload in enumerate(incoming_blocos):
-            bloco_id = getattr(bloco_payload, "id", None)
-            ordem = bloco_payload.ordem if bloco_payload.ordem is not None else idx
+    # CATEGORY (nova lógica baseada em turmas)
+    if "category" in fields_set:
+        # payload.category pode ser string ou None (null) -> aplica diretamente
+        aula.category = payload.category
 
-            # UPDATE existing bloco
-            if bloco_id and bloco_id in existing_blocos:
-                b = existing_blocos[bloco_id]
-                b.titulo = bloco_payload.titulo
-                b.texto = bloco_payload.texto
-                b.ordem = ordem
-                b.imagem_url = getattr(bloco_payload, "imagem_url", None) or None
-                b.youtube_url = getattr(bloco_payload, "youtube_url", None) or None
-                incoming_ids.add(bloco_id)
-            else:
-                # CREATE new bloco
-                novo = models.ConteudoBloco(
-                    aula_id=aula.id,
-                    titulo=bloco_payload.titulo,
-                    texto=bloco_payload.texto,
-                    ordem=ordem,
-                    imagem_url=getattr(bloco_payload, "imagem_url", None) or None,
-                    youtube_url=getattr(bloco_payload, "youtube_url", None) or None
-                )
-                db.add(novo)
-                db.flush() # garante novo.id antes de adicionar ao conjunto
-                # marque o id para não ser deletado na limpeza posterior
-                if novo.id:
-                    incoming_ids.add(novo.id) # adicionar ao conjunto de ids
-        # deletar blocos que não vieram no payload
-        for existing_id, existing_obj in list(existing_blocos.items()):
-            if existing_id not in incoming_ids:
-                db.delete(existing_obj)
+    # BLOCOS
+    if "blocos" in fields_set:
+        if payload.blocos is not None:
+            existing_blocos = {b.id: b for b in (aula.blocos or [])}
+            incoming_blocos = payload.blocos or []
+            incoming_ids = set()
+            for idx, bloco_payload in enumerate(incoming_blocos):
+                bloco_id = getattr(bloco_payload, "id", None)
+                ordem = bloco_payload.ordem if bloco_payload.ordem is not None else idx
+
+                # UPDATE existing bloco
+                if bloco_id and bloco_id in existing_blocos:
+                    b = existing_blocos[bloco_id]
+                    b.titulo = bloco_payload.titulo
+                    b.texto = bloco_payload.texto
+                    b.ordem = ordem
+                    b.imagem_url = getattr(bloco_payload, "imagem_url", None) or None
+                    b.youtube_url = getattr(bloco_payload, "youtube_url", None) or None
+                    incoming_ids.add(bloco_id)
+                else:
+                    # CREATE new bloco
+                    novo = models.ConteudoBloco(
+                        aula_id=aula.id,
+                        titulo=bloco_payload.titulo,
+                        texto=bloco_payload.texto,
+                        ordem=ordem,
+                        imagem_url=getattr(bloco_payload, "imagem_url", None) or None,
+                        youtube_url=getattr(bloco_payload, "youtube_url", None) or None,
+                    )
+                    db.add(novo)
+                    db.flush()  # garante novo.id antes de adicionar ao conjunto
+                    if novo.id:
+                        incoming_ids.add(novo.id)
+            # deletar blocos que não vieram no payload
+            for existing_id, existing_obj in list(existing_blocos.items()):
+                if existing_id not in incoming_ids:
+                    db.delete(existing_obj)
+        else:
+            # se veio explicitamente null, não alteramos (mas geralmente payload.blocos será lista)
+            pass
 
     # EXERCÍCIOS (sincroniza por id) -> agora operamos com JSONB alternatives
-    if payload.exercicios is not None:
-        incoming_exs = payload.exercicios or []
-        existing_exs = {ex.id: ex for ex in (aula.exercicios or [])}
-        incoming_ex_ids = set()
+    if "exercicios" in fields_set:
+        if payload.exercicios is not None:
+            incoming_exs = payload.exercicios or []
+            existing_exs = {ex.id: ex for ex in (aula.exercicios or [])}
+            incoming_ex_ids = set()
 
-        for idx, ex_payload in enumerate(incoming_exs):
-            ordem = ex_payload.ordem if ex_payload.ordem is not None else idx
-            pontos = ex_payload.pontos if ex_payload.pontos is not None else 1
-            ex_id = getattr(ex_payload, "id", None)
+            for idx, ex_payload in enumerate(incoming_exs):
+                ordem = ex_payload.ordem if ex_payload.ordem is not None else idx
+                pontos = ex_payload.pontos if ex_payload.pontos is not None else 1
+                ex_id = getattr(ex_payload, "id", None)
 
-            if ex_id and ex_id in existing_exs:
-                # UPDATE existing exercise
-                ex_model = existing_exs[ex_id]
-                ex_model.titulo = ex_payload.titulo
-                ex_model.enunciado = ex_payload.enunciado
-                try:
-                    ex_model.tipo = models.ExerciseTypeEnum(ex_payload.tipo)
-                except Exception:
-                    pass
-                ex_model.resposta_modelo = ex_payload.resposta_modelo
-                ex_model.pontos = pontos
-                ex_model.ordem = ordem
-                incoming_ex_ids.add(ex_id)
+                if ex_id and ex_id in existing_exs:
+                    # UPDATE existing exercise
+                    ex_model = existing_exs[ex_id]
+                    ex_model.titulo = ex_payload.titulo
+                    ex_model.enunciado = ex_payload.enunciado
+                    try:
+                        ex_model.tipo = models.ExerciseTypeEnum(ex_payload.tipo)
+                    except Exception:
+                        pass
+                    ex_model.resposta_modelo = ex_payload.resposta_modelo
+                    ex_model.pontos = pontos
+                    ex_model.ordem = ordem
+                    incoming_ex_ids.add(ex_id)
 
-                # sincronizar alternativas: payload pode conter objetos ou strings
-                incoming_alternativas = getattr(ex_payload, "alternativas", []) or []
-                incoming_alternativas_certas = set(getattr(ex_payload, "alternativas_certas", []) or [])
-                normalized_alts, correct_ids = normalize_alternativas_payload(incoming_alternativas, incoming_alternativas_certas)
+                    # sincronizar alternativas: payload pode conter objetos ou strings
+                    incoming_alternativas = getattr(ex_payload, "alternativas", []) or []
+                    incoming_alternativas_certas = set(getattr(ex_payload, "alternativas_certas", []) or [])
+                    normalized_alts, correct_ids = normalize_alternativas_payload(incoming_alternativas, incoming_alternativas_certas)
 
-                ex_model.alternativas = normalized_alts or []
-                ex_model.correct_alternativas = correct_ids or []
+                    ex_model.alternativas = normalized_alts or []
+                    ex_model.correct_alternativas = correct_ids or []
 
-            else:
-                # CREATE new exercise
-                try:
-                    tipo_model = models.ExerciseTypeEnum(ex_payload.tipo)
-                except Exception:
-                    tipo_model = models.ExerciseTypeEnum.text
+                else:
+                    # CREATE new exercise
+                    try:
+                        tipo_model = models.ExerciseTypeEnum(ex_payload.tipo)
+                    except Exception:
+                        tipo_model = models.ExerciseTypeEnum.text
 
-                ex_model = models.Exercicio(
-                    aula_id=aula.id,
-                    titulo=ex_payload.titulo,
-                    enunciado=ex_payload.enunciado,
-                    tipo=tipo_model,
-                    resposta_modelo=ex_payload.resposta_modelo,
-                    pontos=pontos,
-                    ordem=ordem
-                )
-                incoming_alternativas = getattr(ex_payload, "alternativas", []) or []
-                incoming_alternativas_certas = set(getattr(ex_payload, "alternativas_certas", []) or [])
-                normalized_alts, correct_ids = normalize_alternativas_payload(incoming_alternativas, incoming_alternativas_certas)
-                ex_model.alternativas = normalized_alts or []
-                ex_model.correct_alternativas = correct_ids or []
-                db.add(ex_model)
-                db.flush()
-                incoming_ex_ids.add(ex_model.id)
+                    ex_model = models.Exercicio(
+                        aula_id=aula.id,
+                        titulo=ex_payload.titulo,
+                        enunciado=ex_payload.enunciado,
+                        tipo=tipo_model,
+                        resposta_modelo=ex_payload.resposta_modelo,
+                        pontos=pontos,
+                        ordem=ordem,
+                    )
+                    incoming_alternativas = getattr(ex_payload, "alternativas", []) or []
+                    incoming_alternativas_certas = set(getattr(ex_payload, "alternativas_certas", []) or [])
+                    normalized_alts, correct_ids = normalize_alternativas_payload(incoming_alternativas, incoming_alternativas_certas)
+                    ex_model.alternativas = normalized_alts or []
+                    ex_model.correct_alternativas = correct_ids or []
+                    db.add(ex_model)
+                    db.flush()
+                    incoming_ex_ids.add(ex_model.id)
 
-        # deletar exercícios que não vieram no payload
-        for existing_id, existing_obj in list(existing_exs.items()):
-            if existing_id not in incoming_ex_ids:
-                db.delete(existing_obj)
+            # deletar exercícios que não vieram no payload
+            for existing_id, existing_obj in list(existing_exs.items()):
+                if existing_id not in incoming_ex_ids:
+                    db.delete(existing_obj)
+        else:
+            # se veio explicitamente null, não alteramos
+            pass
 
     db.commit()
     db.refresh(aula)
-    return aula
+
+    # Construir e retornar objeto compatível com schemas.AulaOut (sem permitted_*):
+    autor_nome = aula.autor.nome if getattr(aula, "autor", None) else None
+    aula_out = schemas.AulaOut(
+        id=aula.id,
+        titulo=aula.titulo,
+        descricao=aula.descricao,
+        autor_id=aula.autor_id,
+        autor_nome=autor_nome,
+        blocos=aula.blocos or [],
+        exercicios=aula.exercicios or [],
+        created_at=aula.created_at,
+        category=getattr(aula, "category", None),
+    )
+    return aula_out
 
 @router.delete("/{aula_id}")
 def deletar_aula(aula_id: int, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):

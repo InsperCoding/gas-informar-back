@@ -9,6 +9,7 @@ class UserBase(BaseModel):
     nome: str
     email: EmailStr
     role: str  # 'admin' | 'professor' | 'aluno'
+    turma: Optional[str] = None
 
 class UserCreate(UserBase):
     senha: str
@@ -23,6 +24,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     role: Optional[str] = None
     senha: Optional[str] = None
+    turma: Optional[str] = None
     class Config:
         orm_mode = True
 
@@ -86,6 +88,7 @@ class AulaCreate(BaseModel):
     descricao: Optional[str] = None
     blocos: Optional[List[ConteudoBlocoCreate]] = None
     exercicios: Optional[List[ExercicioCreate]] = None
+    category: Optional[str] = None
 
 class AulaOut(BaseModel):
     id: int
@@ -96,6 +99,7 @@ class AulaOut(BaseModel):
     blocos: List[ConteudoBlocoOut] = Field(default_factory=list)
     exercicios: List[ExercicioOut] = Field(default_factory=list)
     created_at: datetime
+    category: Optional[str] = None
     
     class Config:
         orm_mode = True
@@ -105,6 +109,7 @@ class AulaUpdate(BaseModel):
     descricao: Optional[str] = None
     blocos: Optional[List[ConteudoBlocoCreate]] = None
     exercicios: Optional[List[ExercicioCreate]] = None
+    category: Optional[str] = None
     class Config:
         orm_mode = True
 

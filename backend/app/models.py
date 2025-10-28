@@ -20,6 +20,7 @@ class User(Base):
     role = Column(String(50), nullable=False, default="aluno")
     senha_hash = Column(String(300), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    turma = Column(String(64), nullable=True, index=True) # category/turma (Python, WebDev)
 
     aulas = relationship("Aula", back_populates="autor", cascade="all, delete-orphan")
     respostas = relationship("RespostaAluno", back_populates="aluno", cascade="all, delete-orphan")
@@ -32,6 +33,7 @@ class Aula(Base):
     descricao = Column(Text, nullable=True)
     autor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    category = Column(String(64), nullable=True, index=True) # category/turma (Python, WebDev)
 
     autor = relationship("User", back_populates="aulas")
     blocos = relationship("ConteudoBloco", back_populates="aula", cascade="all, delete-orphan", order_by="ConteudoBloco.ordem")

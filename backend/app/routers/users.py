@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
-from typing import List
+from typing import List, Optional
 
 from .. import models, schemas, auth
 
@@ -24,60 +24,102 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+
 @router.post("/", response_model=schemas.UserOut)
 def register(user_data: schemas.UserCreate, db: Session = Depends(auth.get_db)):
+    """
+    Cria usuário. Se for uma criação pública (registro), mantenha as regras que desejar.
+    user_data.turma será aplicada se fornecida (pode ser None).
+    """
     if db.query(models.User).filter(models.User.email == user_data.email).first():
         raise HTTPException(status_code=400, detail="Email já cadastrado")
+
     hashed_password = auth.hash_password(user_data.senha)
     new_user = models.User(
         nome=user_data.nome,
         email=user_data.email,
         senha_hash=hashed_password,
-        role=user_data.role
+        role=user_data.role,
+        turma=getattr(user_data, "turma", None) if getattr(user_data, "turma", None) is not None else None,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return new_user
 
+
 @router.get("/me", response_model=schemas.UserOut)
 def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
+
 
 @router.get("/", response_model=List[schemas.UserOut])
 def list_users(db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Apenas administradores podem listar todos os usuários")
-    return db.query(models.User).all()
+    # opcional: order by id or nome
+    return db.query(models.User).order_by(models.User.id.desc()).all()
+
 
 @router.put("/{user_id}", response_model=schemas.UserOut)
-def update_user(user_id: int, user_update: schemas.UserUpdate, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
-    # somente admin pode atualizar outros usuários
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Apenas administradores podem atualizar usuários")
+def update_user(
+    user_id: int,
+    user_update: schemas.UserUpdate,
+    db: Session = Depends(auth.get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """
+    Admins podem atualizar qualquer usuário.
+    Usuário pode atualizar seu próprio perfil também.
+    Usa user_update.__fields_set__ para aplicar campos que vieram no payload (incluindo None).
+    """
+    # autorização: admin ou o próprio usuário
+    if not (current_user.role == "admin" or current_user.id == user_id):
+        raise HTTPException(status_code=403, detail="Permissão negada")
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-    # atualiza campos se presentes
-    if user_update.nome is not None:
+    fields_set = getattr(user_update, "__fields_set__", set())
+
+    # nome
+    if "nome" in fields_set:
         user.nome = user_update.nome
-    if user_update.email is not None:
-        # checa conflito de email com outro usuário
+
+    # email (checa conflito)
+    if "email" in fields_set and user_update.email is not None:
         existing = db.query(models.User).filter(models.User.email == user_update.email, models.User.id != user_id).first()
         if existing:
             raise HTTPException(status_code=400, detail="Email já cadastrado por outro usuário")
         user.email = user_update.email
-    if user_update.role is not None:
+
+    # role (só admin pode alterar role)
+    if "role" in fields_set and user_update.role is not None:
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Apenas administradores podem alterar a role")
         user.role = user_update.role
-    if user_update.senha is not None and user_update.senha != "":
+        # se a role deixar de ser 'aluno', limpamos turma por segurança
+        if user.role != "aluno":
+            user.turma = None
+
+    # senha
+    if "senha" in fields_set and user_update.senha:
         user.senha_hash = auth.hash_password(user_update.senha)
+
+    # TURMA: aplicar se o campo foi enviado (mesmo que seja None -> limpar)
+    if "turma" in fields_set:
+        # somente faça sentido guardar turma em alunos; se role atual do user não for aluno, você pode optar por ignorar ou limpar
+        if user_update.turma is None:
+            user.turma = None
+        else:
+            user.turma = user_update.turma
 
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(user_id: int, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
