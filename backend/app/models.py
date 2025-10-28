@@ -46,6 +46,7 @@ class ConteudoBloco(Base):
     texto = Column(Text, nullable=True)
     ordem = Column(Integer, default=0)
     imagem_url = Column(String(1024), nullable=True)
+    youtube_url = Column(String(512), nullable=True)
 
     aula = relationship("Aula", back_populates="blocos")
 

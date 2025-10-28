@@ -178,6 +178,133 @@ def finalizar_tentativa(aula_id: int, db: Session = Depends(auth.get_db), curren
     db.commit()
     return {"status": "finalizada", "pontuacao": total}
 
+# ---------------
+# GET /aulas/{aula_id}/desempenho  (agregado por aula) 
+# ---------------
+@router.get("/{aula_id}/desempenho")
+def desempenho_aula_geral(aula_id: int, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):
+    """
+    Retorna métricas agregadas da aula:
+    {
+      aula_id,
+      titulo,
+      respondentes,
+      media_pontuacao,
+      percentual_conclusao,  # ver nota abaixo
+      questoes: [
+        {
+          exercicio_id,
+          enunciado,
+          total_respondentes,
+          total_acertos,
+          taxa_acerto,            # percentual (0-100)
+          distribuicao_respostas: { "<alternativa_id_or_label>": count, ... } OR null
+        },
+        ...
+      ]
+    }
+
+    Nota sobre percentual_conclusao:
+    - Não há informação de "turma" / "alunos matriculados" no schema fornecido.
+    - Aqui definimos percentual_conclusao como: (número de tentativas finalizadas) / (número de tentativas existentes) * 100
+      onde "tentativas existentes" significa alunos que possuem alguma RespostaAluno para esta aula.
+    - Se preferir outro denominador (ex.: total de alunos de uma turma), ajuste a lógica.
+    """
+    # permissões: apenas professores/admins podem ver agregados (ou aluno pode ver a própria via outro endpoint)
+    if current_user.role not in ("admin", "professor"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissão negada")
+
+    aula = db.query(models.Aula).options(joinedload(models.Aula.exercicios)).filter(models.Aula.id == aula_id).first()
+    if not aula:
+        raise HTTPException(status_code=404, detail="Aula não encontrada")
+
+    # 1) respondentes / média de pontuação: usar TentativaAula finalizada
+    tentativas = db.query(models.TentativaAula).filter(models.TentativaAula.aula_id == aula_id).all()
+    # respondentes = quantidade de tentativas finalizadas (cada tentativa representa um aluno finalizou)
+    respondentes = sum(1 for t in tentativas if bool(t.finalizada))
+    # média pontuação sobre tentativas finalizadas (se nenhuma, 0)
+    pontuacoes = [t.pontuacao for t in tentativas if t.finalizada and t.pontuacao is not None]
+    media_pontuacao = (sum(pontuacoes) / len(pontuacoes)) if pontuacoes else 0.0
+
+    # 2) percentual_conclusao: aqui usamos (finalizadas / alunos que deram alguma resposta)
+    # buscar alunos que têm ao menos uma resposta nesta aula
+    alunos_com_resposta = (
+        db.query(models.RespostaAluno.aluno_id)
+        .join(models.Exercicio, models.RespostaAluno.exercicio_id == models.Exercicio.id)
+        .filter(models.Exercicio.aula_id == aula_id)
+        .distinct()
+        .all()
+    )
+    total_alunos_com_resposta = len(alunos_com_resposta)
+    percentual_conclusao = (respondentes / total_alunos_com_resposta * 100) if total_alunos_com_resposta > 0 else 0.0
+
+    # 3) para cada exercício: computar totais e distribuição
+    questoes_data = []
+    for ex in (aula.exercicios or []):
+        # respostas relacionadas a esse exercício
+        respostas_ex = (
+            db.query(models.RespostaAluno)
+            .filter(models.RespostaAluno.exercicio_id == ex.id)
+            .all()
+        )
+
+        total_respondentes_ex = len({r.aluno_id for r in respostas_ex})  # distinct alunos que responderam
+        total_acertos_ex = sum(1 for r in respostas_ex if (r.pontuacao or 0) > 0)
+
+        taxa_acerto = (total_acertos_ex / total_respondentes_ex * 100) if total_respondentes_ex > 0 else 0.0
+
+        distribuicao = None
+        # tentar montar distribuição: se exercício tem alternativas JSONB, contamos por alternativa_id
+        try:
+            alterns = ex.alternativas or []  # array JSONB com itens {id, texto, is_correta}
+            if alterns and isinstance(alterns, list):
+                # contar ocorrências por alternativa_id entre respostas_ex
+                counts = {}
+                for r in respostas_ex:
+                    key = str(r.alternativa_id) if r.alternativa_id is not None else "__texto__:" + (r.resposta_texto or "")
+                    counts[key] = counts.get(key, 0) + 1
+                # mapar keys para algo legível (usar id -> texto quando possível)
+                human = {}
+                alt_map = { str(a.get("id")): a.get("texto") or f"Alt {a.get('id')}" for a in alterns }
+                for k, v in counts.items():
+                    if k.startswith("__texto__:"):
+                        label = k.replace("__texto__:", "") or "texto"
+                    else:
+                        label = alt_map.get(k, f"Alt {k}")
+                    human[label] = v
+                distribuicao = human
+            else:
+                # não há alternativas estruturadas: agrupar por resposta_texto
+                counts = {}
+                for r in respostas_ex:
+                    txt = (r.resposta_texto or "").strip() or f"alt:{r.alternativa_id}"
+                    counts[txt] = counts.get(txt, 0) + 1
+                distribuicao = counts if counts else None
+        except Exception as e:
+            # segurança: se algo falhar, deixamos distribuicao como None
+            distribuicao = None
+
+        questoes_data.append({
+            "exercicio_id": ex.id,
+            "enunciado": ex.enunciado,
+            "total_respondentes": total_respondentes_ex,
+            "total_acertos": total_acertos_ex,
+            "taxa_acerto": round(taxa_acerto, 2),
+            "distribuicao_respostas": distribuicao
+        })
+
+    response = {
+        "aula_id": aula.id,
+        "titulo": aula.titulo,
+        "respondentes": respondentes,
+        "media_pontuacao": round(media_pontuacao, 2),
+        "percentual_conclusao": round(percentual_conclusao, 2),
+        "questoes": questoes_data
+    }
+
+    return response
+
+
 # -----------------------
 # GET /aulas/{aula_id}/desempenho/{aluno_id}
 # -----------------------
@@ -335,22 +462,31 @@ def atualizar_aula(aula_id: int, payload: schemas.AulaUpdate, db: Session = Depe
         for idx, bloco_payload in enumerate(incoming_blocos):
             bloco_id = getattr(bloco_payload, "id", None)
             ordem = bloco_payload.ordem if bloco_payload.ordem is not None else idx
+
+            # UPDATE existing bloco
             if bloco_id and bloco_id in existing_blocos:
                 b = existing_blocos[bloco_id]
                 b.titulo = bloco_payload.titulo
                 b.texto = bloco_payload.texto
                 b.ordem = ordem
                 b.imagem_url = getattr(bloco_payload, "imagem_url", None) or None
+                b.youtube_url = getattr(bloco_payload, "youtube_url", None) or None
                 incoming_ids.add(bloco_id)
             else:
+                # CREATE new bloco
                 novo = models.ConteudoBloco(
                     aula_id=aula.id,
                     titulo=bloco_payload.titulo,
                     texto=bloco_payload.texto,
                     ordem=ordem,
-                    imagem_url=getattr(bloco_payload, "imagem_url", None) or None
+                    imagem_url=getattr(bloco_payload, "imagem_url", None) or None,
+                    youtube_url=getattr(bloco_payload, "youtube_url", None) or None
                 )
                 db.add(novo)
+                db.flush() # garante novo.id antes de adicionar ao conjunto
+                # marque o id para não ser deletado na limpeza posterior
+                if novo.id:
+                    incoming_ids.add(novo.id) # adicionar ao conjunto de ids
         # deletar blocos que não vieram no payload
         for existing_id, existing_obj in list(existing_blocos.items()):
             if existing_id not in incoming_ids:
