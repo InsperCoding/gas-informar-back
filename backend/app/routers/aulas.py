@@ -379,7 +379,22 @@ def gravar_feedback_resposta(resposta_id: int, payload: dict, db: Session = Depe
 @router.get("/", response_model=List[schemas.AulaOut])
 def listar_aulas(skip: int = 0, limit: int = 50, db: Session = Depends(auth.get_db)):
     aulas = db.query(models.Aula).options(joinedload(models.Aula.blocos), joinedload(models.Aula.exercicios)).offset(skip).limit(limit).all()
-    return aulas
+    
+    # adicionar nome do autor manualmente
+    result = []
+    for a in aulas:
+        autor_nome = a.autor.nome if a.autor else None
+        result.append(
+            schemas.AulaOut(
+                id=a.id,
+                titulo=a.titulo,
+                descricao=a.descricao,
+                autor_id=a.autor_id,
+                autor_nome=autor_nome,
+                created_at=a.created_at,
+            )
+        )
+    return result
 
 @router.get("/{aula_id}", response_model=schemas.AulaOut)
 def obter_aula(aula_id: int, db: Session = Depends(auth.get_db), current_user: models.User = Depends(auth.get_current_user)):

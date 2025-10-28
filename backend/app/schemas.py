@@ -92,9 +92,11 @@ class AulaOut(BaseModel):
     titulo: str
     descricao: Optional[str] = None
     autor_id: int
+    autor_nome: Optional[str] = None
     blocos: List[ConteudoBlocoOut] = Field(default_factory=list)
     exercicios: List[ExercicioOut] = Field(default_factory=list)
     created_at: datetime
+    
     class Config:
         orm_mode = True
 
