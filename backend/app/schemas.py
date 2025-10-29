@@ -16,8 +16,8 @@ class UserCreate(UserBase):
 
 class UserOut(UserBase):
     id: int
-    class Config:
-        orm_mode = True
+
+    model_config = {"from_attributes": True}
 
 class UserUpdate(BaseModel):
     nome: Optional[str] = None
@@ -25,8 +25,8 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     senha: Optional[str] = None
     turma: Optional[str] = None
-    class Config:
-        orm_mode = True
+
+    model_config = {"from_attributes": True}
 
 class Token(BaseModel):
     access_token: str
@@ -45,8 +45,8 @@ class ConteudoBlocoCreate(BaseModel):
 
 class ConteudoBlocoOut(ConteudoBlocoCreate):
     id: int
-    class Config:
-        orm_mode = True
+
+    model_config = {"from_attributes": True}
 
 class ExerciseType(str, Enum):
     text = "text"
@@ -57,8 +57,8 @@ class AlternativaInOut(BaseModel):
     texto: str
     # frontend pode enviar is_correta para conveniência — backend normaliza para correct_alternativas
     is_correta: Optional[bool] = None
-    class Config:
-        orm_mode = True
+
+    model_config = {"from_attributes": True}
 
 class ExercicioCreate(BaseModel):
     id: Optional[int] = None
@@ -80,8 +80,8 @@ class ExercicioOut(BaseModel):
     alternativas: Optional[List[AlternativaInOut]] = []
     # lista de ids corretos (refere-se ao campo id dentro do JSON de alternativas)
     correct_alternativas: Optional[List[int]] = []
-    class Config:
-        orm_mode = True
+    
+    model_config = {"from_attributes": True}
 
 class AulaCreate(BaseModel):
     titulo: str
@@ -101,8 +101,7 @@ class AulaOut(BaseModel):
     created_at: datetime
     category: Optional[str] = None
     
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 class AulaUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -129,8 +128,8 @@ class RespostaOut(BaseModel):
     alternativa_id: Optional[int] = None
     pontuacao: int
     tentativa_id: Optional[int] = None
-    class Config:
-        orm_mode = True
+    
+    model_config = {"from_attributes": True}
 
 
 # ---------- Desempenho / relatórios ----------
