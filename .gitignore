@@ -2,4 +2,6 @@
 /.venv
 /backend/app/__pycache__/
 /backend/app/routers/__pycache__/
+/backend/app/utils/__pycache__/
 .DS_Store
+backend/static/uploads/
