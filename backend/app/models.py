@@ -16,7 +16,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String(200), nullable=False)
-    email = Column(String(200), unique=True, index=True, nullable=False)
+    username = Column(String(200), unique=True, index=True, nullable=False)
     role = Column(String(50), nullable=False, default="aluno")
     senha_hash = Column(String(300), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -52,6 +52,8 @@ class ConteudoBloco(Base):
 
     aula = relationship("Aula", back_populates="blocos")
 
+# models.py (classe Exercicio)
+
 class Exercicio(Base):
     __tablename__ = "exercicios"
     id = Column(Integer, primary_key=True, index=True)
@@ -63,15 +65,14 @@ class Exercicio(Base):
     pontos = Column(Integer, default=1)
     ordem = Column(Integer, default=0)
 
-    # NOVO: armazenar alternativas como JSONB:
-    # lista de objetos -> [{ "id": 1, "texto": "...", "is_correta": false }, ...]
-    alternativas = Column(JSONB, nullable=True, default=list)
+    # NOVO: feedback geral do professor para a questão (visível a todos os alunos)
+    feedback_professor = Column(Text, nullable=True)
 
-    # manter lista de ids corretos (JSONB) para lógica de correção
+    # armazenar alternativas como JSONB:
+    alternativas = Column(JSONB, nullable=True, default=list)
     correct_alternativas = Column(JSONB, nullable=True, default=list)
 
     aula = relationship("Aula", back_populates="exercicios")
-    # relação legacy (não usada nas rotas nouvelles) — mantida por precaução
     alternativas_rel = relationship("Alternativa", back_populates="exercicio", cascade="all, delete-orphan", order_by="Alternativa.id")
     respostas = relationship("RespostaAluno", back_populates="exercicio", cascade="all, delete-orphan")
 

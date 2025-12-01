@@ -1,15 +1,26 @@
-# schemas.py
-from pydantic import BaseModel, EmailStr, Field
+ # schemas.py
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
+import re
 
 # ---------- usuários ----------
 class UserBase(BaseModel):
     nome: str
-    email: EmailStr
+    username: str
     role: str  # 'admin' | 'professor' | 'aluno'
     turma: Optional[str] = None
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        if len(v) < 4:
+            raise ValueError('Username deve ter no mínimo 4 caracteres')
+        digit_count = sum(c.isdigit() for c in v)
+        if digit_count < 2:
+            raise ValueError('Username deve conter pelo menos 2 dígitos')
+        return v
 
 class UserCreate(UserBase):
     senha: str
@@ -21,10 +32,21 @@ class UserOut(UserBase):
 
 class UserUpdate(BaseModel):
     nome: Optional[str] = None
-    email: Optional[EmailStr] = None
+    username: Optional[str] = None
     role: Optional[str] = None
     senha: Optional[str] = None
     turma: Optional[str] = None
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            if len(v) < 4:
+                raise ValueError('Username deve ter no mínimo 4 caracteres')
+            digit_count = sum(c.isdigit() for c in v)
+            if digit_count < 2:
+                raise ValueError('Username deve conter pelo menos 2 dígitos')
+        return v
 
     model_config = {"from_attributes": True}
 
@@ -33,7 +55,7 @@ class Token(BaseModel):
     token_type: str
 
 class TokenData(BaseModel):
-    email: Optional[str] = None
+    username: Optional[str] = None
 
 # ---------- aulas / conteúdo / exercícios ----------
 class ConteudoBlocoCreate(BaseModel):
@@ -55,9 +77,7 @@ class ExerciseType(str, Enum):
 class AlternativaInOut(BaseModel):
     id: Optional[int] = None
     texto: str
-    # frontend pode enviar is_correta para conveniência — backend normaliza para correct_alternativas
     is_correta: Optional[bool] = None
-
     model_config = {"from_attributes": True}
 
 class ExercicioCreate(BaseModel):
@@ -69,7 +89,9 @@ class ExercicioCreate(BaseModel):
     pontos: Optional[int] = 1
     ordem: Optional[int] = 0
     alternativas: Optional[List[AlternativaInOut]] = None
-    alternativas_certas: Optional[List[int]] = None  # índices, se o frontend preferir
+    alternativas_certas: Optional[List[int]] = None
+    feedback_professor: Optional[str] = None   # NOVO
+
 
 class ExercicioOut(BaseModel):
     id: int
@@ -78,9 +100,9 @@ class ExercicioOut(BaseModel):
     tipo: ExerciseType
     pontos: int
     alternativas: Optional[List[AlternativaInOut]] = []
-    # lista de ids corretos (refere-se ao campo id dentro do JSON de alternativas)
     correct_alternativas: Optional[List[int]] = []
-    
+    feedback_professor: Optional[str] = None   # NOVO
+
     model_config = {"from_attributes": True}
 
 class AulaCreate(BaseModel):
@@ -128,9 +150,9 @@ class RespostaOut(BaseModel):
     alternativa_id: Optional[int] = None
     pontuacao: int
     tentativa_id: Optional[int] = None
-    
-    model_config = {"from_attributes": True}
+    feedback_professor: Optional[str] = None   # opcional (mantém compatibilidade)
 
+    model_config = {"from_attributes": True}
 
 # ---------- Desempenho / relatórios ----------
 class QuestaoDesempenho(BaseModel):

@@ -373,6 +373,7 @@ def desempenho_aula_por_aluno(aula_id: int, aluno_id: int, db: Session = Depends
 
     for ex in aula.exercicios or []:
         r = resp_map.get(ex.id)
+        # sempre mostrar o feedback geral definido no exercício (ex.feedback_professor)
         item = {
             "exercicio_id": ex.id,
             "enunciado": ex.enunciado,
@@ -381,10 +382,11 @@ def desempenho_aula_por_aluno(aula_id: int, aluno_id: int, db: Session = Depends
             "acertou": ((r.pontuacao or 0) > 0) if r else False,
             "pontuacao_obtida": r.pontuacao if r else 0,
             "resposta_modelo": ex.resposta_modelo,
-            "feedback_professor": r.feedback_professor if r else None,
+            "feedback_professor": getattr(ex, "feedback_professor", None),
         }
         total_obtido += (r.pontuacao or 0) if r else 0
         results.append(item)
+
 
     response = {
         "aula_id": aula_id,
@@ -550,6 +552,7 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
             resposta_modelo=ex.resposta_modelo,
             pontos=(ex.pontos or 1),
             ordem=(ex.ordem if ex.ordem is not None else i),
+            feedback_professor=(getattr(ex, "feedback_professor", None) or None),
         )
 
         incoming_alts = getattr(ex, "alternativas", []) or []
@@ -679,6 +682,7 @@ def atualizar_aula(
                     ex_model.resposta_modelo = ex_payload.resposta_modelo
                     ex_model.pontos = pontos
                     ex_model.ordem = ordem
+                    ex_model.feedback_professor = getattr(ex_payload, "feedback_professor", None)
                     incoming_ex_ids.add(ex_id)
 
                     # sincronizar alternativas: payload pode conter objetos ou strings
@@ -704,6 +708,7 @@ def atualizar_aula(
                         resposta_modelo=ex_payload.resposta_modelo,
                         pontos=pontos,
                         ordem=ordem,
+                        feedback_professor=getattr(ex_payload, "feedback_professor", None),
                     )
                     incoming_alternativas = getattr(ex_payload, "alternativas", []) or []
                     incoming_alternativas_certas = set(getattr(ex_payload, "alternativas_certas", []) or [])
@@ -772,7 +777,8 @@ def criar_exercicio(aula_id: int, payload: schemas.ExercicioCreate, db: Session 
         tipo=tipo_model,
         resposta_modelo=payload.resposta_modelo,
         pontos=(payload.pontos or 1),
-        ordem=(payload.ordem or 0)
+        ordem=(payload.ordem or 0),
+        feedback_professor=getattr(payload, "feedback_professor", None)
     )
 
     incoming_alternativas = getattr(payload, "alternativas", []) or []

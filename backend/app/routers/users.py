@@ -19,7 +19,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         raise HTTPException(status_code=400, detail="Usuário ou senha incorretos")
     access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth.create_access_token(
-        data={"sub": user.email, "role": user.role},
+        data={"sub": user.username, "role": user.role},
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
@@ -31,13 +31,13 @@ def register(user_data: schemas.UserCreate, db: Session = Depends(auth.get_db)):
     Cria usuário. Se for uma criação pública (registro), mantenha as regras que desejar.
     user_data.turma será aplicada se fornecida (pode ser None).
     """
-    if db.query(models.User).filter(models.User.email == user_data.email).first():
-        raise HTTPException(status_code=400, detail="Email já cadastrado")
+    if db.query(models.User).filter(models.User.username == user_data.username).first():
+        raise HTTPException(status_code=400, detail="Username já cadastrado")
 
     hashed_password = auth.hash_password(user_data.senha)
     new_user = models.User(
         nome=user_data.nome,
-        email=user_data.email,
+        username=user_data.username,
         senha_hash=hashed_password,
         role=user_data.role,
         turma=getattr(user_data, "turma", None) if getattr(user_data, "turma", None) is not None else None,
@@ -87,12 +87,12 @@ def update_user(
     if "nome" in fields_set:
         user.nome = user_update.nome
 
-    # email (checa conflito)
-    if "email" in fields_set and user_update.email is not None:
-        existing = db.query(models.User).filter(models.User.email == user_update.email, models.User.id != user_id).first()
+    # username (checa conflito)
+    if "username" in fields_set and user_update.username is not None:
+        existing = db.query(models.User).filter(models.User.username == user_update.username, models.User.id != user_id).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Email já cadastrado por outro usuário")
-        user.email = user_update.email
+            raise HTTPException(status_code=400, detail="Username já cadastrado por outro usuário")
+        user.username = user_update.username
 
     # role (só admin pode alterar role)
     if "role" in fields_set and user_update.role is not None:
