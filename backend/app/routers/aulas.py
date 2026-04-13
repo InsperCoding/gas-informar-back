@@ -533,7 +533,7 @@ def criar_aula(payload: schemas.AulaCreate, db: Session = Depends(auth.get_db), 
             texto=bloco.texto,
             ordem=(bloco.ordem if bloco.ordem is not None else i),
             imagem_url=(getattr(bloco, "imagem_url", None) if getattr(bloco, "imagem_url", None) else None),
-            youtube_url=(getattr(bloco, "youtube_url", None) if getattr(bloco, "youtube_url", None) else None),
+            # youtube_url=(getattr(bloco, "youtube_url", None) if getattr(bloco, "youtube_url", None) else None),
         )
         db.add(cb)
 
@@ -634,7 +634,7 @@ def atualizar_aula(
                     b.texto = bloco_payload.texto
                     b.ordem = ordem
                     b.imagem_url = getattr(bloco_payload, "imagem_url", None) or None
-                    b.youtube_url = getattr(bloco_payload, "youtube_url", None) or None
+                    # b.youtube_url = getattr(bloco_payload, "youtube_url", None) or None
                     incoming_ids.add(bloco_id)
                 else:
                     # CREATE new bloco
@@ -644,7 +644,7 @@ def atualizar_aula(
                         texto=bloco_payload.texto,
                         ordem=ordem,
                         imagem_url=getattr(bloco_payload, "imagem_url", None) or None,
-                        youtube_url=getattr(bloco_payload, "youtube_url", None) or None,
+                        # youtube_url=getattr(bloco_payload, "youtube_url", None) or None,
                     )
                     db.add(novo)
                     db.flush()  # garante novo.id antes de adicionar ao conjunto

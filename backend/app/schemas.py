@@ -63,7 +63,7 @@ class ConteudoBlocoCreate(BaseModel):
     texto: Optional[str] = None
     ordem: Optional[int] = None
     imagem_url: Optional[str] = None
-    youtube_url: Optional[str] = None
+    # youtube_url: Optional[str] = None
 
 class ConteudoBlocoOut(ConteudoBlocoCreate):
     id: int

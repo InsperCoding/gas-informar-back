@@ -5,7 +5,7 @@ from sqlalchemy.types import Enum as SQLEnum
 from datetime import datetime
 import enum
 from .database import Base
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON
 
 # Tipo de exercício
 class ExerciseTypeEnum(str, enum.Enum):
@@ -48,7 +48,7 @@ class ConteudoBloco(Base):
     texto = Column(Text, nullable=True)
     ordem = Column(Integer, default=0)
     imagem_url = Column(String(1024), nullable=True)
-    youtube_url = Column(String(512), nullable=True)
+    # youtube_url = Column(String(512), nullable=True)
 
     aula = relationship("Aula", back_populates="blocos")
 
@@ -69,8 +69,8 @@ class Exercicio(Base):
     feedback_professor = Column(Text, nullable=True)
 
     # armazenar alternativas como JSONB:
-    alternativas = Column(JSONB, nullable=True, default=list)
-    correct_alternativas = Column(JSONB, nullable=True, default=list)
+    alternativas = Column(JSON, nullable=True, default=list)
+    correct_alternativas = Column(JSON, nullable=True, default=list)
 
     aula = relationship("Aula", back_populates="exercicios")
     alternativas_rel = relationship("Alternativa", back_populates="exercicio", cascade="all, delete-orphan", order_by="Alternativa.id")
