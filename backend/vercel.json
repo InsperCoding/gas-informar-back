@@ -4,10 +4,5 @@
       "source": "/(.*)",
       "destination": "/index.py"
     }
-  ],
-  "functions": {
-    "*.py": {
-      "maxDuration": 60
-    }
-  }
+  ]
 }
